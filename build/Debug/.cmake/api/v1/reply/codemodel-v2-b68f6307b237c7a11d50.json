@@ -1,0 +1,124 @@
+{
+	"configurations" : 
+	[
+		{
+			"directories" : 
+			[
+				{
+					"build" : ".",
+					"childIndexes" : 
+					[
+						1
+					],
+					"jsonFile" : "directory-.-Debug-d0094a50bb2071803777.json",
+					"minimumCMakeVersion" : 
+					{
+						"string" : "3.22"
+					},
+					"projectIndex" : 0,
+					"source" : "."
+				},
+				{
+					"build" : "board",
+					"childIndexes" : 
+					[
+						2
+					],
+					"jsonFile" : "directory-board-Debug-df0312fb54f1f9457ee2.json",
+					"minimumCMakeVersion" : 
+					{
+						"string" : "3.22"
+					},
+					"parentIndex" : 0,
+					"projectIndex" : 1,
+					"source" : "board",
+					"targetIndexes" : 
+					[
+						2
+					]
+				},
+				{
+					"build" : "board/cmake/stm32cubemx",
+					"jsonFile" : "directory-board.cmake.stm32cubemx-Debug-c97d324638c9b15caa86.json",
+					"minimumCMakeVersion" : 
+					{
+						"string" : "3.22"
+					},
+					"parentIndex" : 1,
+					"projectIndex" : 1,
+					"source" : "board/cmake/stm32cubemx",
+					"targetIndexes" : 
+					[
+						0,
+						1
+					]
+				}
+			],
+			"name" : "Debug",
+			"projects" : 
+			[
+				{
+					"childIndexes" : 
+					[
+						1
+					],
+					"directoryIndexes" : 
+					[
+						0
+					],
+					"name" : "Robomaster_Framework"
+				},
+				{
+					"directoryIndexes" : 
+					[
+						1,
+						2
+					],
+					"name" : "board",
+					"parentIndex" : 0,
+					"targetIndexes" : 
+					[
+						0,
+						1,
+						2
+					]
+				}
+			],
+			"targets" : 
+			[
+				{
+					"directoryIndex" : 2,
+					"id" : "STM32_Drivers::@54d3542b93787d1dae47",
+					"jsonFile" : "target-STM32_Drivers-Debug-aec5f786af1b9ea54b3c.json",
+					"name" : "STM32_Drivers",
+					"projectIndex" : 1
+				},
+				{
+					"directoryIndex" : 2,
+					"id" : "ThreadX::@54d3542b93787d1dae47",
+					"jsonFile" : "target-ThreadX-Debug-1f1a2bbb572ca896dff9.json",
+					"name" : "ThreadX",
+					"projectIndex" : 1
+				},
+				{
+					"directoryIndex" : 1,
+					"id" : "board::@da039aa0f48ce6d11a40",
+					"jsonFile" : "target-board-Debug-7944809912c534679f8c.json",
+					"name" : "board",
+					"projectIndex" : 1
+				}
+			]
+		}
+	],
+	"kind" : "codemodel",
+	"paths" : 
+	{
+		"build" : "D:/WorkSpace/Robomaster_Framework/build/Debug",
+		"source" : "D:/WorkSpace/Robomaster_Framework"
+	},
+	"version" : 
+	{
+		"major" : 2,
+		"minor" : 7
+	}
+}

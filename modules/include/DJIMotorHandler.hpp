@@ -10,7 +10,8 @@ class DJIMotorHandler
 {
 public:
     /**
-     *@brief 使用指针数组, 2个CAN口，每个CAN口最多8个电机
+     * 每条 CAN 总线按反馈 ID 0x201~0x208 存放最多 8 个电机实例。
+     * 控制帧 0x200 对应槽位 0~3，0x1FF 对应槽位 4~7。
      */
     DJIMotor *DJIMotorList[2][8]{};
 
@@ -27,30 +28,34 @@ public:
     bool CAN2_0x1FF_Exist = false; // CAN2是否存在控制报文为0x1FF电机
 
     /**
-     * @brief 注册电机，将电机指针存入MotorList中
-     * @param DJImotor 电机指针
-     * @param hcan CAN句柄
-     * @param canId 电机ID
+     * @brief 注册电机并绑定其 CAN 句柄和反馈 ID。
+     * @param DJImotor 电机实例，须在注册后保持有效。
+     * @param hcan CAN1 或 CAN2 句柄。
+     * @param canId 反馈标准 ID，支持 0x201~0x208。
      */
     void registerMotor(DJIMotor *DJImotor, CAN_HandleTypeDef *hcan, uint16_t canId); // 使用指针作为参数
 
     /**
-     * @brief 发送控制数据
+     * @brief 为已注册电机计算输出并发送分组控制帧。
+     * @return 任一已注册分组的发送均成功时返回 true。
      */
-    void sendControlData();
+    bool sendControlData();
 
     /**
      * @brief 处理并更新电机反馈数据
      * @param hcan CAN 句柄
      * @param rx_data 反馈数据
-     * @param index 电机索引
+     * @param index 反馈 ID 偏移，范围 0~7（对应 0x201~0x208）。
      */
     void updateFeedback(CAN_HandleTypeDef *hcan, uint8_t *rx_data, int index);
 
+    /** 检查全部已注册电机在上一检查周期内是否收到新反馈。 */
     void AllMotorAliveCheck();
 
+    /** 解析一帧电调反馈，更新编码器、转速、电流、温度和累计位置。 */
     void UpdateSensorData(DJIMotor *motor, uint8_t *can_receive_data);
 
+    /** 返回进程内唯一的电机注册表及 CAN 控制帧管理器。 */
     static DJIMotorHandler *Instance()
     {
         static DJIMotorHandler instance;

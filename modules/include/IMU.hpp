@@ -11,9 +11,9 @@
  * @struct acc_data_t
  * @brief 加速度计数据结构体
  * 存储加速度计的数据
- * @param x x轴加速度
- * @param y y轴加速度
- * @param z z轴加速度
+ * @param x x轴加速度，单位 m/s^2
+ * @param y y轴加速度，单位 m/s^2
+ * @param z z轴加速度，单位 m/s^2
  */
 typedef struct acc_data_t
 {
@@ -27,9 +27,9 @@ typedef struct acc_data_t
  * @struct gyro_data_t
  * @brief 陀螺仪数据结构体
  * 存储陀螺仪的数据
- * @param roll 横滚角
- * @param pitch 俯仰角
- * @param yaw 偏航角
+ * @param x x轴角速度，单位 rad/s
+ * @param y y轴角速度，单位 rad/s
+ * @param z z轴角速度，单位 rad/s
  */
 typedef struct gyro_data_t
 {
@@ -98,17 +98,21 @@ public:
      */
     virtual void VerifyGyroChipID() = 0;
 
+    /**
+     * @brief 控制 IMU 加热器温度。
+     * @param target_temp 目标温度，单位摄氏度。
+     */
     virtual void TemperatureControl(float target_temp) = 0;
 
     /**
      * @brief 验证加速度计数据
-     * @todo 未实现
+     * @brief 检查加速度数据的有效性并更新自检状态。
      */
     virtual void VerifyAccData() = 0;
 
     /**
      * @brief 验证陀螺仪数据
-     * @todo 未实现
+     * @brief 检查角速度数据的有效性并更新自检状态。
      */
     virtual void VerifyGyroData() = 0;
 };

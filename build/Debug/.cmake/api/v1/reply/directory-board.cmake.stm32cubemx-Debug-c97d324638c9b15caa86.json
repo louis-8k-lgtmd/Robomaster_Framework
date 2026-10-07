@@ -1,0 +1,14 @@
+{
+	"backtraceGraph" : 
+	{
+		"commands" : [],
+		"files" : [],
+		"nodes" : []
+	},
+	"installers" : [],
+	"paths" : 
+	{
+		"build" : "board/cmake/stm32cubemx",
+		"source" : "board/cmake/stm32cubemx"
+	}
+}

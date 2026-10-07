@@ -3,8 +3,16 @@
 
 #include "crc.hpp"
 
-// CRC16 Table
+/*
+ * CRC16 查表实现使用的初值及 256 项查找表。
+ *
+ * 表项把逐位计算一个输入字节的过程预先计算好；CRC 主循环每处理一个字节，
+ * 通过当前 CRC 的低字节与输入字节形成表索引，再与 CRC 高字节合并。
+ * 这种写法以 256 个常量表项换取较少的逐位运算，适合在 MCU 上逐字节处理帧。
+ * 表的多项式、反射方向和初值必须与通信协议发送端一致，不能仅凭 CRC 位宽替换。
+ */
 const uint16_t CRC16_INIT = 0xFFFF;
+// CRC16 每个可能的 8 位索引对应一个预计算的 16 位状态变换结果。
 const uint16_t W_CRC16_TABLE[256] = {
     0x0000, 0x1189, 0x2312, 0x329b, 0x4624, 0x57ad, 0x6536, 0x74bf, 0x8c48, 0x9dc1, 0xaf5a, 0xbed3,
     0xca6c, 0xdbe5, 0xe97e, 0xf8f7, 0x1081, 0x0108, 0x3393, 0x221a, 0x56a5, 0x472c, 0x75b7, 0x643e,
@@ -30,21 +38,29 @@ const uint16_t W_CRC16_TABLE[256] = {
     0x3de3, 0x2c6a, 0x1ef1, 0x0f78};
 
 /**
- * @brief CRC16 Caculation function
- * @param[in] pchMessage : Data to Verify,
- * @param[in] dwLength : Stream length = Data + checksum
- * @param[in] wCRC : CRC16 init value(default : 0xFFFF)
- * @return : CRC16 checksum
+ * @brief 对给定字节流继续计算 CRC16。
+ *
+ * 逐字节更新状态：把旧 CRC 低 8 位与当前数据字节异或作为查表索引，
+ * 将旧 CRC 右移 8 位后与查表结果异或，得到新的 16 位 CRC 状态。
+ * wCRC 是起始状态，因此既可传 CRC16_INIT 计算新帧，也可传入已有状态续算。
+ *
+ * @param pchMessage 输入数据首地址；空指针时按当前接口约定返回 0xFFFF。
+ * @param dwLength 要参与计算的字节数，不含待校验/写入的 CRC 字段。
+ * @param wCRC 计算初始状态，通常为 CRC16_INIT (0xFFFF)。
+ * @return 最终 16 位 CRC 数值；本函数不负责追加或字节序编码。
  */
 uint16_t Get_CRC16_Check_Sum(const uint8_t *pchMessage, uint32_t dwLength, uint16_t wCRC)
 {
   uint8_t ch_data;
 
+  // 防止解引用空指针；返回值与合法 CRC 数值可能相同，调用者需自行保证指针有效。
   if (pchMessage == nullptr)
     return 0xFFFF;
   while (dwLength--)
   {
+    // 后置递增依次取出输入字节；循环结束时恰好处理 dwLength 个字节。
     ch_data = *pchMessage++;
+    // 查表一次完成当前字节的 CRC 状态更新，结果截断在 16 位。
     (wCRC) =
         ((uint16_t)(wCRC) >> 8) ^ W_CRC16_TABLE[((uint16_t)(wCRC) ^ (uint16_t)(ch_data)) & 0x00ff];
   }
@@ -53,45 +69,63 @@ uint16_t Get_CRC16_Check_Sum(const uint8_t *pchMessage, uint32_t dwLength, uint1
 }
 
 /**
- * @brief CRC16 Verify function
- * @param[in] pchMessage : Data to Verify,
- * @param[in] dwLength : Stream length = Data + checksum
- * @return : True or False (CRC Verify Result)
+ * @brief 校验缓冲区末尾两个字节所携带的 CRC16。
+ *
+ * 帧布局为 [参与 CRC 的数据 ...][CRC 低字节][CRC 高字节]。
+ * 函数只对前 dwLength-2 个字节按标准初值重算，再逐字节比较末尾 CRC；
+ * CRC16 在线路上的低字节先存放，因此校验时按低、高顺序取出。
+ *
+ * @param pchMessage 完整帧缓冲区。
+ * @param dwLength 完整帧长度，包含末尾两个 CRC 字节。
+ * @return 非零表示匹配，零表示空指针、长度不满足接口要求或 CRC 不匹配。
  */
 uint32_t Verify_CRC16_Check_Sum(const uint8_t *pchMessage, uint32_t dwLength)
 {
   uint16_t w_expected = 0;
 
+  // 至少需要数据和 CRC 字段；当前接口将长度不大于 2 的缓冲区视为无效。
   if ((pchMessage == nullptr) || (dwLength <= 2))
     return false;
 
+  // 校验输入数据区，不把缓冲区中现有的 CRC 字段再次纳入计算。
   w_expected = Get_CRC16_Check_Sum(pchMessage, dwLength - 2, CRC16_INIT);
+  // 两个独立比较明确规定缓冲区存储字节序为 little-endian CRC16。
   return (
       (w_expected & 0xff) == pchMessage[dwLength - 2] &&
       ((w_expected >> 8) & 0xff) == pchMessage[dwLength - 1]);
 }
 
 /**
- * @brief Append CRC16 value to the end of the buffer
- * @param[in] pchMessage : Data to Verify,
- * @param[in] dwLength : Stream length = Data + checksum
- * @return none
+ * @brief 将 CRC16 写入缓冲区末尾两个字节。
+ *
+ * 调用前应先填好数据区，并把 dwLength 设为“数据长度 + 2 字节 CRC 空间”；
+ * 本函数只覆盖最后两个字节，不分配空间，也不改变缓冲区长度。
+ *
+ * @param pchMessage 可写缓冲区。
+ * @param dwLength 缓冲区总长度，包含预留的两个 CRC 字节。
  */
 void Append_CRC16_Check_Sum(uint8_t *pchMessage, uint32_t dwLength)
 {
   uint16_t w_crc = 0;
 
+  // 空指针或不符合当前接口的短缓冲区直接忽略，避免写越界。
   if ((pchMessage == nullptr) || (dwLength <= 2))
     return;
 
+  // 只计算数据区，并使用协议固定初值；CRC 字段自身不参与计算。
   w_crc = Get_CRC16_Check_Sum(reinterpret_cast<uint8_t *>(pchMessage), dwLength - 2, CRC16_INIT);
 
+  // 以低字节在前、高字节在后的格式写入帧尾，与 Verify_CRC16_Check_Sum 一致。
   pchMessage[dwLength - 2] = (uint8_t)(w_crc & 0x00ff);
   pchMessage[dwLength - 1] = (uint8_t)((w_crc >> 8) & 0x00ff);
 }
 
-// crc8
+/*
+ * CRC8 使用独立的 8 位初值和查找表，与 CRC16 是两套不同的参数/状态算法。
+ * 表的生成参数必须对应所使用的通信协议；不能把 CRC16 的初值或查找表混用。
+ */
 const uint8_t CRC8_INIT = 0xff;
+// 一个字节的 256 种索引状态各对应一个预计算的 CRC8 更新值。
 const uint8_t W_CRC8_TABLE[256] = {
     0x00, 0x5e, 0xbc, 0xe2, 0x61, 0x3f, 0xdd, 0x83, 0xc2, 0x9c, 0x7e, 0x20, 0xa3, 0xfd, 0x1f, 0x41,
     0x9d, 0xc3, 0x21, 0x7f, 0xfc, 0xa2, 0x40, 0x1e, 0x5f, 0x01, 0xe3, 0xbd, 0x3e, 0x60, 0x82, 0xdc,
@@ -114,8 +148,10 @@ uint8_t Get_CRC8_Check_Sum(const uint8_t *pchMessage, uint16_t dwLength, uint8_t
 {
   uint8_t ucIndex;
 
+  // ucCRC8 是可传入的当前状态；传 CRC8_INIT 可从头计算，传旧结果可继续计算。
   while (dwLength--)
   {
+    // 当前输入字节与 CRC 状态异或，作为查表索引完成 8 位状态更新。
     ucIndex = ucCRC8 ^ (*pchMessage++);
     ucCRC8 = W_CRC8_TABLE[ucIndex];
   }
@@ -126,13 +162,16 @@ void Append_CRC8_Check_Sum(uint8_t *pchMessage, uint16_t dwLength)
 {
   uint8_t ucCRC = 0;
 
+  // 最后一字节预留给 CRC8；当前实现对长度不大于 2 的缓冲区不执行写入。
   if (pchMessage == 0 || dwLength <= 2)
   {
     return;
   }
 
+  // 对 CRC 字段之前的所有字节计算，使用协议约定的固定初值。
   ucCRC = Get_CRC8_Check_Sum((uint8_t *)pchMessage, dwLength - 1, CRC8_INIT);
 
+  // CRC8 占用一个字节，直接放在帧末尾。
   pchMessage[dwLength - 1] = ucCRC;
 }
 
@@ -140,11 +179,13 @@ uint32_t Verify_CRC8_Check_Sum(const uint8_t *pchMessage, uint16_t dwLength)
 {
   uint8_t ucExpected = 0;
 
+  // 缓冲区需包含数据和末尾 CRC 字节；空指针及短帧返回校验失败。
   if (pchMessage == 0 || dwLength <= 2)
   {
     return 0;
   }
 
+  // 重算除最后 CRC 字节外的所有内容，再与接收帧尾比较。
   ucExpected = Get_CRC8_Check_Sum(pchMessage, dwLength - 1, CRC8_INIT);
 
   return (ucExpected == pchMessage[dwLength - 1]);

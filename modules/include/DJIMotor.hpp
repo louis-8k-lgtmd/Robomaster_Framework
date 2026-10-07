@@ -45,15 +45,16 @@ public:
      */
     struct MotorFeedBack
     {
-        int16_t last_ecd;      ///< 上次电机编码器的读数
-        uint16_t ecd;          ///< 当前电机编码器的读数
-        int16_t speed_rpm;     ///< 电机的转速，单位rpm
-        float currentFdb;    ///< 电机电流反馈
-        float speedFdb;        ///< 电机当前速度反馈, 单位rad/s
-        float lastSpeedFdb;    ///< 上次记录的电机速度
-        float positionFdb;     ///< 电机当前位置反馈
-        float lastPositionFdb; ///< 上次记录的电机位置
-        float temperatureFdb;  ///< 电机温度反馈
+        int16_t last_ecd;      ///< 上次编码器计数，范围 0~8191
+        uint16_t ecd;          ///< 当前编码器计数，一转 8192 计数
+        int16_t speed_rpm;     ///< 转子转速，单位 rpm
+        float currentFdb;      ///< 电调反馈电流原始值
+        float speedFdb;        ///< 输出轴角速度，单位 rad/s
+        float lastSpeedFdb;    ///< 上一次反馈的输出轴角速度
+        float positionFdb;     ///< 由编码器增量累计的输出轴角位置，单位 rad
+        float lastPositionFdb; ///< 上一次累计的位置，单位 rad
+        float temperatureFdb;  ///< 电调温度，单位摄氏度
+        bool ecdInitialized{}; ///< 收到首帧后才允许累计相对位置
     };
 
     MotorStateTypedef MotorState;
@@ -65,14 +66,14 @@ public:
     PID speedPid = PID(0.0f, 0.0f, 0.0f, 0.0f, 0.0f, PID_POSITION); ///< TODO: 配置速度环参数
     PID positionPid = PID(0.0f, 0.0f, 0.0f, 0.0f, 0.0f, PID_POSITION); ///< TODO: 配置位置环参数
 
-    float speedSet;    ///< 设定的目标速度
-    float positionSet; ///< 设定的目标位置，范围[-Π, Π]
+    float speedSet;    ///< 目标输出轴角速度，单位 rad/s
+    float positionSet; ///< 目标输出轴角位置，单位 rad
 
     int16_t currentSet;  ///< 设定的电流输出
     uint16_t maxCurrent; ///< 最大电流限制
 
-    uint32_t AliveFlag;
-    uint32_t Pre_AliveFlag;
+    uint32_t AliveFlag;     ///< 自上次在线检查后收到的反馈帧计数
+    uint32_t Pre_AliveFlag; ///< 上次在线检查时保存的反馈帧计数
 
     GearBox gearBox;
     /**

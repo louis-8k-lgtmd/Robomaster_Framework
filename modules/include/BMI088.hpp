@@ -18,16 +18,13 @@ enum BMI088_SENSOR
 };
 
 /*---------------------------硬件连接---------------------------*/
-// TODO: 配置 BMI088 使用的 SPI 句柄，以及加速度计和陀螺仪各自的 GPIO 片选端口、引脚。
+// 实际 SPI 句柄和两个 CS GPIO 在 BMI088.cpp 中按板级配置绑定。
 
-#define HEATING_RESISTANCE_TIM htim10            //< 加热电阻定时器
-#define HEATING_RESISTANCE_CHANNEL TIM_CHANNEL_1 //< 加热电阻通道
-
-/*-----bmi088的spi读取协议部分-----*/
+/* BMI088 SPI 地址位：读操作 bit7=1，写操作 bit7=0。 */
 #define BMI088_SPI_WRITE_CODE 0x7F
 #define BMI088_SPI_READ_CODE 0x80
 
-/*-----加速度计寄存器表-----*/
+/* 加速度计寄存器地址、复位值和量程配置（见 BMI088 数据手册）。 */
 #define ACC_CHIP_ID_ADDR 0x00
 #define ACC_CHIP_ID_VAL 0x1E
 
@@ -101,7 +98,7 @@ enum BMI088_SENSOR
 #define ACC_SOFTRESET_ADDR 0x7E
 #define ACC_SOFTRESET_VAL 0xB6
 
-/*-----陀螺仪寄存器表-----*/
+/* 陀螺仪寄存器地址及量程/带宽配置。 */
 #define GYRO_CHIP_ID_ADDR 0x00
 #define GYRO_CHIP_ID_VAL 0x0F
 
@@ -163,11 +160,11 @@ enum BMI088_SENSOR
 #define BMI088_ACCEL_PRE_CALI_G_NORM 9.805f
 
 #define IMU_ACCEL_3G_SEN 0.0008974358974f
-#define IMU_ACCEL_6G_SEN 0.00179443359375f
+#define IMU_ACCEL_6G_SEN 0.00179443359375f // ±6 g 量程下每 LSB 对应的 m/s^2
 #define IMU_ACCEL_12G_SEN 0.0035888671875f
 #define IMU_ACCEL_24G_SEN 0.007177734375f
 
-#define IMU_GYRO_2000_SEN 0.00106526443603169529841533860381f
+#define IMU_GYRO_2000_SEN 0.00106526443603169529841533860381f // ±2000°/s 量程下每 LSB 对应的 rad/s
 #define IMU_GYRO_1000_SEN 0.00053263221801584764920766930190693f
 #define IMU_GYRO_500_SEN 0.00026631610900792382460383465095346f
 #define IMU_GYRO_250_SEN 0.00013315805450396191230191732547673f
@@ -177,24 +174,26 @@ enum BMI088_SENSOR
     {
     public:
         /**
-         * @brief 从寄存器读取数据
-         * @param cs 片选
-         * @param addr 寄存器地址
-         * @param data 数据
-         * @param len 数据长度
+         * @brief 使用指定芯片片选读取连续寄存器。
+         * @param cs 传感器片选。
+         * @param addr 起始寄存器地址。
+         * @param data 接收缓冲区。
+         * @param len 读取字节数；加速度计事务会额外丢弃一个无效字节。
          */
         void ReadReg(enum BMI088_SENSOR cs, uint8_t addr, uint8_t *data, uint8_t len);
 
         /**
-         * @brief 写数据到寄存器
-         * @param cs 片选
-         * @param addr 寄存器地址
-         * @param data 数据
-         * @param len 数据长度
+         * @brief 使用指定芯片片选写入连续寄存器。
+         * @param cs 传感器片选。
+         * @param addr 起始寄存器地址。
+         * @param data 待发送数据。
+         * @param len 写入字节数。
          */
         void WriteReg(enum BMI088_SENSOR cs, uint8_t addr, uint8_t *data, uint8_t len);
 
+        /** 软复位、校验芯片 ID 并配置加速度计及陀螺仪工作参数。 */
         void Config() override;
+        /** 在设备静止时采样陀螺仪，计算并更新零偏。 */
         void Calibrate() override;
 
         void ReadAccData(acc_data_t *data) override;
@@ -211,7 +210,11 @@ enum BMI088_SENSOR
 
 
     private:
-        float Gyro_offset[3]; // 陀螺仪零飘
+        float Gyro_offset[3]{
+            BMI088_GYRO_PRE_CALI_OFFSET_X,
+            BMI088_GYRO_PRE_CALI_OFFSET_Y,
+            BMI088_GYRO_PRE_CALI_OFFSET_Z
+        };
     };
 
 }

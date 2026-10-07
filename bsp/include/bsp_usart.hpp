@@ -35,14 +35,15 @@ void USART6_Init(void);
  * @param Size 数据长度
  * @param mode 发送模式
  */
-void USART_Transmit(UART_HandleTypeDef *huart, uint8_t *pData, uint16_t Size, enum USART_Mode mode);
+HAL_StatusTypeDef USART_Transmit(UART_HandleTypeDef *huart, uint8_t *pData, uint16_t Size, enum USART_Mode mode);
 
 /**
  * @brief 串口接收数据。
  * @param huart 指向串口句柄的指针
  * @param pData 接收数据的缓冲区
  * @param Size 数据长度
+ * @param mode 接收模式
  */
-void USART_Receive(UART_HandleTypeDef *huart, uint8_t *pData, uint16_t Size);
+void USART_Receive(UART_HandleTypeDef *huart, uint8_t *pData, uint16_t Size, enum USART_Mode mode);
 
 #endif //  __BSP_USART_H

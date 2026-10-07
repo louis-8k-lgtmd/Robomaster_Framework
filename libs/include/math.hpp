@@ -3,6 +3,7 @@
 
 namespace Numeric
 {
+    // Clamp input symmetrically to [-abs(maxValue), abs(maxValue)].
     float LimitABS(float input, float maxValue);
 }
 
