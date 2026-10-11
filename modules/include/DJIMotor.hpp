@@ -53,7 +53,7 @@ public:
         float lastSpeedFdb;    ///< 上一次反馈的输出轴角速度
         float positionFdb;     ///< 由编码器增量累计的输出轴角位置，单位 rad
         float lastPositionFdb; ///< 上一次累计的位置，单位 rad
-        float temperatureFdb;  ///< 电调温度，单位摄氏度
+        float temperatureFdb;  ///< 电调温度；C610 无此反馈，固定为零
         bool ecdInitialized{}; ///< 收到首帧后才允许累计相对位置
     };
 

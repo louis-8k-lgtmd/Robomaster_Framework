@@ -207,6 +207,8 @@ enum BMI088_SENSOR
 
         void TemperatureControl(float target_temp) override;
 
+        uint8_t last_acc_chip_id = 0;
+        uint8_t last_gyro_chip_id = 0;
 
 
     private:

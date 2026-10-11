@@ -26,6 +26,7 @@ extern "C" {
 #endif
 
 /* Includes ------------------------------------------------------------------*/
+#include <stdint.h>
 #include "tx_api.h"
 
 /* Private includes ----------------------------------------------------------*/
@@ -35,7 +36,27 @@ extern "C" {
 
 /* Exported types ------------------------------------------------------------*/
 /* USER CODE BEGIN ET */
+/* Watch g_bmi088_debug in the debugger to trace ThreadX and IMU progress. */
+typedef struct
+{
+  uint32_t kernel_define_count; /* tx_application_define was entered */
+  uint32_t byte_pool_status;    /* TX_SUCCESS (0) or ThreadX error code */
+  uint32_t app_init_status;     /* App_ThreadX_Init result */
+  uint32_t thread_create_status;
+  uint32_t thread_entry_count;
+  uint32_t loop_count;
+  uint32_t init_attempts;
+  uint32_t init_successes;
+  uint32_t sample_attempts;
+  uint32_t sample_successes;
+  uint32_t error_flags;        /* bit0 ACC ID, bit1 GYRO ID, bit2 init,
+                                * bit3 ACC data, bit4 GYRO data */
+  uint8_t acc_chip_id;         /* expected 0x1E */
+  uint8_t gyro_chip_id;        /* expected 0x0F */
+  uint8_t last_sample_ok;
+} BMI088_DebugInfo;
 
+extern volatile BMI088_DebugInfo g_bmi088_debug;
 /* USER CODE END ET */
 
 /* Exported constants --------------------------------------------------------*/
@@ -57,7 +78,19 @@ void MX_ThreadX_Init(void);
 
 /* Private defines -----------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-
+/*
+ * Sensor-only bring-up mode: initialize only the BMI088 acquisition thread
+ * and its GPIO/SPI dependencies. Set to 0 to restore the full application.
+ */
+#define BMI088_ONLY_DEBUG 0U
+/* Motor-only bring-up: CAN1/CAN2 and one ThreadX motor thread. */
+#define M2006_ONLY_DEBUG 0U
+/* Bring up BMI088 and M2006 in two separate ThreadX threads. */
+#define IMU_M2006_DEBUG 1U
+#if (BMI088_ONLY_DEBUG + M2006_ONLY_DEBUG + IMU_M2006_DEBUG) > 1U
+#error "Choose only one debug mode"
+#endif
+#define APP_FULL_MODE (!(BMI088_ONLY_DEBUG || M2006_ONLY_DEBUG || IMU_M2006_DEBUG))
 /* USER CODE END PD */
 
 /* USER CODE BEGIN 1 */

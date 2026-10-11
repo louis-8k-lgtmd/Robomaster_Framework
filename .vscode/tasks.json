@@ -1,0 +1,16 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "Build Debug firmware",
+            "type": "process",
+            "command": "cmake",
+            "args": ["--build", "--preset", "Debug", "-j", "4"],
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "group": "build",
+            "problemMatcher": "$gcc"
+        }
+    ]
+}

@@ -20,7 +20,6 @@ int GetCanIndex(const CAN_HandleTypeDef *hcan)
         return 1;
     return -1;
 }
-
 /*
  * 读取两个大端字节并解释为有符号二补码 int16。
  * 先按无符号组合，再对最高位为 1 的值减 2^16，避免依赖主机端序和
@@ -174,7 +173,7 @@ void DJIMotorHandler::UpdateSensorData(DJIMotor *motor, uint8_t *can_data)
     /*
      * DJI 反馈帧固定 8 字节布局：
      * [0..1] 编码器计数(0..8191，无符号大端)，[2..3] 转子速度 rpm，
-     * [4..5] 电流反馈，[6] 温度；最后一个字节目前不参与控制逻辑。
+     * [4..5] 转矩电流反馈；C610 的 [6..7] 为保留字节。
      */
     const uint16_t ecd = static_cast<uint16_t>((static_cast<uint16_t>(can_data[0]) << 8U) | can_data[1]);
     const int16_t speed = ReadInt16BE(&can_data[2]);
@@ -186,9 +185,9 @@ void DJIMotorHandler::UpdateSensorData(DJIMotor *motor, uint8_t *can_data)
     feedback.last_ecd = static_cast<int16_t>(feedback.ecd);
     feedback.ecd = ecd;
     feedback.speed_rpm = speed;
-    // 解码反馈中的转速、电流和温度；编码器本身按无符号计数处理。
+    // 编码器按无符号计数处理；C610 不提供温度反馈。
     feedback.currentFdb = ReadInt16BE(&can_data[4]);
-    feedback.temperatureFdb = can_data[6];
+    feedback.temperatureFdb = 0;
     // rpm -> 转子 rad/s -> 除以减速比得到输出轴 rad/s。
     feedback.speedFdb = speed * (6.28318530718f / 60.0f / ratio);
 
@@ -228,24 +227,4 @@ void DJIMotorHandler::AllMotorAliveCheck()
                 motor->AliveCheck();
         }
     }
-
-}
-
-extern "C" uint8_t MotorControlTaskStep(void)
-{
-    /*
-     * C ABI 周期任务入口，由 app_threadx.c 的 Motor Control 线程调用。
-     * 每次先计算并发送当前电机命令，再用调用次数分频执行在线检查；
-     * 当前线程约每 10 ms 调用一次，因此 10 次约为 100 ms 检查窗口。
-     */
-    static uint8_t alive_check_divider;
-    DJIMotorHandler *handler = DJIMotorHandler::Instance();
-    const bool sent = handler->sendControlData();
-    if (++alive_check_divider >= 10U)
-    {
-        // 该计数依据控制任务周期换算；调整线程周期时也需相应更新分频值。
-        handler->AllMotorAliveCheck();
-        alive_check_divider = 0U;
-    }
-    return sent ? 1U : 0U;
 }

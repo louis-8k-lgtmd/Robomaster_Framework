@@ -52,7 +52,7 @@ public:
     /** 检查全部已注册电机在上一检查周期内是否收到新反馈。 */
     void AllMotorAliveCheck();
 
-    /** 解析一帧电调反馈，更新编码器、转速、电流、温度和累计位置。 */
+    /** 解析一帧电调反馈，更新编码器、转速、电流和累计位置。 */
     void UpdateSensorData(DJIMotor *motor, uint8_t *can_receive_data);
 
     /** 返回进程内唯一的电机注册表及 CAN 控制帧管理器。 */

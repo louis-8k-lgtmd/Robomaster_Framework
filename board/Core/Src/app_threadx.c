@@ -74,19 +74,27 @@ typedef struct
  * 线程创建函数传入 sizeof(stack)，因此栈容量参数的单位是字节；
  * USART/IMU/电机线程各有独立控制块和栈，避免共享栈导致任务互相破坏。
  */
+#if APP_FULL_MODE
 static TX_THREAD usart_thread;
 static ULONG usart_thread_stack[512];
+#endif
 static TX_SEMAPHORE usart_rx_ready;
 static TX_THREAD imu_thread;
 static ULONG imu_thread_stack[768];
+#if APP_FULL_MODE
 static TX_SEMAPHORE imu_heartbeat;
 static TX_SEMAPHORE imu_operation;
+#endif
+#if !BMI088_ONLY_DEBUG
 static TX_THREAD motor_thread;
 static ULONG motor_thread_stack[512];
+#endif
+#if APP_FULL_MODE
 static TX_SEMAPHORE motor_heartbeat;
 static TX_SEMAPHORE motor_operation;
 static TX_THREAD alive_thread;
 static ULONG alive_thread_stack[512];
+#endif
 /*
  * 各 ready 标志用于状态灯与工作线程门控：
  * startup_ready 表示 ThreadX 对象和全部线程已创建；
@@ -98,12 +106,19 @@ static volatile uint8_t can_ready;
 static volatile uint8_t imu_ready;
 static volatile uint8_t control_ready;
 volatile BMI088_Sample g_imu_sample;
+volatile BMI088_DebugInfo g_bmi088_debug = {
+  .byte_pool_status = 0xFFFFFFFFUL,
+  .app_init_status = 0xFFFFFFFFUL,
+  .thread_create_status = 0xFFFFFFFFUL
+};
 /*
  * 供 IMU_GetLatest() 读取的最新完整样本。IMU 线程写入，其他线程通过临界区快照读取。
  * 启动消息使用静态存储期，因为 UART DMA 发送是异步操作，源缓冲区必须持续有效。
  */
+#if APP_FULL_MODE
 static uint8_t usart1_startup_message[] = "USART DMA ready\r\n";
 volatile HAL_StatusTypeDef usart1_startup_tx_status;
+#endif
 static USART_Frame usart_frames[USART_QUEUE_DEPTH];
 /*
  * 单生产者/单消费者环形队列：
@@ -121,10 +136,16 @@ volatile uint32_t usart6_rx_frames;
 
 /* Private function prototypes -----------------------------------------------*/
 /* USER CODE BEGIN PFP */
+#if APP_FULL_MODE
 static VOID USART_ThreadEntry(ULONG argument);
+#endif
 static VOID IMU_ThreadEntry(ULONG argument);
+#if !BMI088_ONLY_DEBUG
 static VOID Motor_ThreadEntry(ULONG argument);
+#endif
+#if APP_FULL_MODE
 static VOID Alive_ThreadEntry(ULONG argument);
+#endif
 /* USER CODE END PFP */
 
 /**
@@ -143,22 +164,70 @@ UINT App_ThreadX_Init(VOID *memory_ptr)
    * 参数仍由 ThreadX 初始化入口传入，当前实现不需要使用它。
    */
   (void)byte_pool;
+#if IMU_M2006_DEBUG
+  startup_ready = 0U;
+  can_ready = 0U;
+  control_ready = 0U;
+  imu_ready = 0U;
+  ret = tx_thread_create(&imu_thread, "BMI088",
+                         IMU_ThreadEntry, 0,
+                         imu_thread_stack, sizeof(imu_thread_stack),
+                         9, 9, TX_NO_TIME_SLICE, TX_AUTO_START);
+  g_bmi088_debug.thread_create_status = ret;
+  if (ret != TX_SUCCESS)
+  {
+    return ret;
+  }
+  ret = tx_thread_create(&motor_thread, "M2006",
+                         Motor_ThreadEntry, 0,
+                         motor_thread_stack, sizeof(motor_thread_stack),
+                         8, 8, TX_NO_TIME_SLICE, TX_AUTO_START);
+  if (ret == TX_SUCCESS)
+  {
+    startup_ready = 1U;
+  }
+  return ret;
+#elif M2006_ONLY_DEBUG
+  startup_ready = 0U;
+  can_ready = 0U;
+  control_ready = 0U;
+  imu_ready = 0U;
+  ret = tx_thread_create(&motor_thread, "M2006 debug",
+                         Motor_ThreadEntry, 0,
+                         motor_thread_stack, sizeof(motor_thread_stack),
+                         9, 9, TX_NO_TIME_SLICE, TX_AUTO_START);
+  if (ret == TX_SUCCESS)
+  {
+    startup_ready = 1U;
+  }
+  return ret;
+#elif BMI088_ONLY_DEBUG
+  /*
+   * Keep only the sensor acquisition thread active for standalone BMI088
+   * debugging. No UART, motor, or alive-monitor thread/semaphore is started.
+   */
+  startup_ready = 0U;
+  can_ready = 0U;
+  imu_ready = 0U;
+  control_ready = 0U;
+  ret = tx_thread_create(&imu_thread, "BMI088 debug",
+                         IMU_ThreadEntry, 0,
+                         imu_thread_stack, sizeof(imu_thread_stack),
+                         8, 8, TX_NO_TIME_SLICE, TX_AUTO_START);
+  g_bmi088_debug.thread_create_status = ret;
+  if (ret == TX_SUCCESS)
+  {
+    startup_ready = 1U;
+  }
+  return ret;
+#else
   /* 每次启动都从“未就绪”开始，避免沿用未初始化的全局状态。 */
   startup_ready = 0U;
   can_ready = 0U;
   imu_ready = 0U;
   control_ready = 0U;
 
-  /*
-   * 先启动 CAN 接收/发送能力，再注册电机实例。
-   * 若 CAN 初始化失败，不调用电机注册；后续控制线程仍创建并发心跳，
-   * 但因 control_ready 为零不会执行电机控制步进，Alive 灯可报告启动故障。
-   */
-  can_ready = CAN_Init() ? 1U : 0U;
-  if (can_ready)
-  {
-    control_ready = ControlTask_Init();
-  }
+  /* CAN、电机注册和周期控制均在 Motor_ThreadEntry 中执行。 */
 
   /*
    * 创建计数信号量，初值 0 表示还没有待处理事件：
@@ -244,6 +313,7 @@ UINT App_ThreadX_Init(VOID *memory_ptr)
   /* USER CODE END App_ThreadX_Init */
 
   return ret;
+#endif
 }
 
 /**
@@ -336,6 +406,7 @@ void IMU_GetLatest(BMI088_Sample *sample)
   tx_interrupt_control(interrupt_state);
 }
 
+#if APP_FULL_MODE
 static VOID USART_ThreadEntry(ULONG argument)
 {
   USART_Frame frame;
@@ -379,26 +450,54 @@ static VOID USART_ThreadEntry(ULONG argument)
     USART_ProcessFrame(frame.huart, frame.data, frame.size);
   }
 }
+#endif
 
 static VOID IMU_ThreadEntry(ULONG argument)
 {
   BMI088_Sample sample = {0};
+#if APP_FULL_MODE
   uint8_t operation_ok;
+#endif
   (void)argument;
+  ++g_bmi088_debug.thread_entry_count;
 
   for (;;)
   {
+    ++g_bmi088_debug.loop_count;
     /*
      * 初始化失败时在后续周期重试；初始化成功后每轮读取一次样本。
      * 该线程是 BMI088 驱动的唯一调用者，避免并发 SPI 访问和标志竞争。
      */
     if (!imu_ready)
     {
+      uint8_t acc_id;
+      uint8_t gyro_id;
+      ++g_bmi088_debug.init_attempts;
       imu_ready = BMI088_TaskInit();
+      BMI088_TaskGetChipIds(&acc_id, &gyro_id);
+      g_bmi088_debug.acc_chip_id = acc_id;
+      g_bmi088_debug.gyro_chip_id = gyro_id;
+      g_bmi088_debug.error_flags = BMI088_TaskGetErrorFlags();
+      if (imu_ready)
+      {
+        ++g_bmi088_debug.init_successes;
+      }
     }
     else
     {
-      operation_ok = BMI088_TaskRead(&sample);
+      uint8_t read_ok;
+      ++g_bmi088_debug.sample_attempts;
+#if APP_FULL_MODE
+      read_ok = operation_ok = BMI088_TaskRead(&sample);
+#else
+      read_ok = BMI088_TaskRead(&sample);
+#endif
+      g_bmi088_debug.last_sample_ok = read_ok;
+      g_bmi088_debug.error_flags = BMI088_TaskGetErrorFlags();
+      if (read_ok)
+      {
+        ++g_bmi088_debug.sample_successes;
+      }
       /*
        * BMI088_TaskRead 先生成局部 sample，再在临界区中整体发布全局快照。
        * operation 信号仅代表本次加速度、角速度、温度读取全部有效；
@@ -407,26 +506,37 @@ static VOID IMU_ThreadEntry(ULONG argument)
       UINT interrupt_state = tx_interrupt_control(TX_INT_DISABLE);
       g_imu_sample = sample;
       tx_interrupt_control(interrupt_state);
+#if APP_FULL_MODE
       if (operation_ok)
       {
         (void)tx_semaphore_put(&imu_operation);
       }
+#endif
     }
 
+#if APP_FULL_MODE
     /*
      * 无论初始化或采样成功与否都发送 heartbeat：
      * Alive 线程可据此识别“线程还在跑，但传感器功能失败”的情况。
      */
     (void)tx_semaphore_put(&imu_heartbeat);
+#endif
     tx_thread_sleep(WORKER_HEARTBEAT_TICKS);
   }
 }
 
-extern uint8_t MotorControlTaskStep(void);
-
+#if !BMI088_ONLY_DEBUG
 static VOID Motor_ThreadEntry(ULONG argument)
 {
   (void)argument;
+  ++g_m2006_debug.thread_entries;
+  control_ready = ControlTask_Init();
+  g_m2006_debug.init_ok = control_ready;
+  if (control_ready)
+  {
+    can_ready = CAN_Init() ? 1U : 0U;
+  }
+  g_m2006_debug.can_ok = can_ready;
   for (;;)
   {
     /*
@@ -434,20 +544,26 @@ static VOID Motor_ThreadEntry(ULONG argument)
      * 未就绪时跳过控制步进，但仍发送 heartbeat，便于将调度存活与控制可用性区分。
      */
     uint8_t operation_ok = 0U;
-    if (control_ready)
+    if (control_ready && can_ready)
     {
-      operation_ok = MotorControlTaskStep();
+      operation_ok = ControlTask_Step();
     }
+#if APP_FULL_MODE
     if (operation_ok)
     {
       (void)tx_semaphore_put(&motor_operation);
     }
     // operation 只表示本次控制步进报告成功；heartbeat 每周期无条件递增。
     (void)tx_semaphore_put(&motor_heartbeat);
+#else
+    (void)operation_ok;
+#endif
     tx_thread_sleep(TX_TIMER_TICKS_PER_SECOND / 100U);
   }
 }
+#endif
 
+#if APP_FULL_MODE
 static UINT WaitForHeartbeat(TX_SEMAPHORE *heartbeat,
                              TX_SEMAPHORE *operation,
                              UINT *operation_ok)
@@ -499,4 +615,5 @@ static VOID Alive_ThreadEntry(ULONG argument)
                imu_alive && imu_ready && imu_ok);
   }
 }
+#endif
 /* USER CODE END 1 */

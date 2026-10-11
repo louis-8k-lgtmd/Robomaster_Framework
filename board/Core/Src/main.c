@@ -91,11 +91,18 @@ int main(void)
 
   /* USER CODE END SysInit */
 
-  /*
-   * 所有 HAL 外设在启动 ThreadX 前初始化，供各线程直接使用。
-   * DMA 必须先于 UART 初始化后的 DMA 接收启动；CAN/SPI/GPIO 分别供电机和 BMI088 使用。
-   */
+  /* 独立调试模式只初始化对应外设；正常模式初始化全部外设。 */
   MX_GPIO_Init();
+#if IMU_M2006_DEBUG
+  MX_SPI1_Init();
+  MX_CAN1_Init();
+  MX_CAN2_Init();
+#elif M2006_ONLY_DEBUG
+  MX_CAN1_Init();
+  MX_CAN2_Init();
+#elif BMI088_ONLY_DEBUG
+  MX_SPI1_Init();
+#else
   MX_DMA_Init();
   MX_CAN1_Init();
   MX_TIM1_Init();
@@ -104,6 +111,7 @@ int main(void)
   MX_CAN2_Init();
   MX_I2C3_Init();
   MX_SPI1_Init();
+#endif
   /* USER CODE BEGIN 2 */
 
   /* USER CODE END 2 */

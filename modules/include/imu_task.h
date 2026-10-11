@@ -22,6 +22,9 @@ typedef struct
 uint8_t BMI088_TaskInit(void);
 /* Read one sample; returns nonzero only when all sample fields are valid. */
 uint8_t BMI088_TaskRead(BMI088_Sample *sample);
+/* Current driver error bits: ACC ID, GYRO ID, init, ACC data, GYRO data. */
+uint32_t BMI088_TaskGetErrorFlags(void);
+void BMI088_TaskGetChipIds(uint8_t *acc_id, uint8_t *gyro_id);
 /* Copy the latest sample published by the IMU ThreadX worker. */
 void IMU_GetLatest(BMI088_Sample *sample);
 

@@ -4,6 +4,23 @@
 #include <cmath>
 #include <limits>
 
+namespace
+{
+/* 调参入口：输出轴单位 rad、rad/s；PID 每 10 ms 更新一次。 */
+constexpr float kSpeedKp = 200.0f;
+constexpr float kSpeedKi = 1.5f;
+constexpr float kSpeedKd = 0.0f;
+constexpr float kSpeedIntegralLimit = 600.0f;
+constexpr float kPositionKp = 12.0f;
+constexpr float kPositionKi = 0.0f;
+constexpr float kPositionKd = 0.0f;
+constexpr float kPositionMaxSpeedRadS = 3.0f;
+constexpr uint16_t kCurrentCommandLimit = 2000U;
+/* Small, smooth current bias helps the motor cross low-speed static friction. */
+constexpr float kFrictionCurrent = 100.0f;
+constexpr float kFrictionBlendSpeedRadS = 0.15f;
+}
+
 M2006::M2006()
 {
     /*
@@ -16,9 +33,11 @@ M2006::M2006()
      * DJIMotor 构造时默认 RELAX_MODE，因此上电不会自动驱动电机。
      */
     gearBox = GearBox_M2006;
-    maxCurrent = 10000;
-    speedPid = PID(100.0f, 0.1f, 0.0f, maxCurrent, 2000.0f, PID_POSITION);
-    positionPid = PID(8.0f, 0.0f, 0.0f, 20.0f, 0.0f, PID_POSITION);
+    maxCurrent = kCurrentCommandLimit;
+    speedPid = PID(kSpeedKp, kSpeedKi, kSpeedKd, maxCurrent,
+                   kSpeedIntegralLimit, PID_POSITION);
+    positionPid = PID(kPositionKp, kPositionKi, kPositionKd,
+                      kPositionMaxSpeedRadS, 0.0f, PID_POSITION);
 }
 
 void M2006::setOutput()
@@ -40,8 +59,9 @@ void M2006::setOutput()
         positionPid.ref = positionSet;
         positionPid.fdb = motorFeedback.positionFdb;
         positionPid.UpdateResult();
-        // 位置 PID 的输出定义为速度目标，受 positionPid.maxOut 限制。
-        speedPid.ref = positionPid.result;
+        // Add the sine reference derivative so the position loop corrects tracking error.
+        speedPid.ref = Numeric::LimitABS(
+            positionPid.result + positionFeedforwardRadS, positionPid.maxOut);
         break;
     case RELAX_MODE:
     default:
@@ -62,8 +82,15 @@ void M2006::setOutput()
     const float currentLimit = maxCurrent < std::numeric_limits<int16_t>::max()
                                    ? maxCurrent
                                    : std::numeric_limits<int16_t>::max();
-    const float output = Numeric::LimitABS(speedPid.result, currentLimit);
-    currentSet = std::isfinite(output) ? static_cast<int16_t>(output) : 0;
+    float output = speedPid.result;
+    if (controlMode == POS_MODE && std::isfinite(speedPid.ref))
+    {
+        const float command_speed = speedPid.ref;
+        output += kFrictionCurrent * command_speed /
+                  (std::fabs(command_speed) + kFrictionBlendSpeedRadS);
+    }
+    output = Numeric::LimitABS(output, currentLimit);
+    currentSet = output;//std::isfinite(output) ? static_cast<int16_t>(output) : 0;
 }
 
 M2006::MotorStateTypedef M2006::AliveCheck()

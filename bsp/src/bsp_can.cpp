@@ -1,11 +1,16 @@
 #include "bsp_can.hpp"
-#include "DJIMotorHandler.hpp"
+#include "control_task.h"
+
+extern "C"
+{
+volatile CAN_DebugState g_can_debug = {};
+}
 
 /*
  * CAN BSP 在此连接 HAL 与上层电机管理器：
  *   启动阶段：CAN_Init 配置过滤器、启动 CAN1/CAN2 并打开 FIFO0 通知；
  *   发送方向：电机管理器组帧 -> CAN_Transmit -> HAL 发送邮箱；
- *   接收方向：CAN FIFO0 中断 -> 本文件回调取帧/筛选 -> 电机管理器更新反馈。
+ *   接收方向：CAN FIFO0 中断 -> 原始帧入队 -> 电机线程解析反馈。
  *
  * 本文件只处理 CAN 外设和帧传递，不负责电机 PID 或协议以外的业务。
  */
@@ -15,6 +20,29 @@ namespace
 bool IsValidCan(CAN_HandleTypeDef *hcan)
 {
     return hcan != nullptr && (hcan->Instance == CAN1 || hcan->Instance == CAN2);
+}
+
+void DrainRxFifo0(CAN_HandleTypeDef *hcan)
+{
+    while (HAL_CAN_GetRxFifoFillLevel(hcan, CAN_RX_FIFO0) > 0U)
+    {
+        CAN_RxHeaderTypeDef header;
+        uint8_t data[8];
+        if (HAL_CAN_GetRxMessage(hcan, CAN_RX_FIFO0, &header, data) != HAL_OK)
+            return;
+
+        ++g_can_debug.rx_frames;
+        g_can_debug.last_rx_bus = hcan == &hcan1 ? 1U : 2U;
+        g_can_debug.last_rx_id = header.IDE == CAN_ID_STD ? header.StdId : header.ExtId;
+        g_can_debug.last_rx_dlc = header.DLC;
+        if (hcan == &hcan1 && header.IDE == CAN_ID_STD &&
+            header.RTR == CAN_RTR_DATA && header.DLC == 8U &&
+            header.StdId == M2006_FEEDBACK_STD_ID)
+        {
+            ++g_can_debug.rx_m2006_frames;
+            ControlTask_QueueFeedbackFromISR(hcan, header.StdId, data);
+        }
+    }
 }
 }
 
@@ -68,6 +96,7 @@ uint8_t CAN_Transmit(CAN_HandleTypeDef *hcan, uint32_t Id, uint8_t *msg, uint16_
         HAL_CAN_GetState(hcan) != HAL_CAN_STATE_LISTENING ||
         HAL_CAN_GetTxMailboxesFreeLevel(hcan) == 0U)
     {
+        ++g_can_debug.tx_rejected;
         return 0U;
     }
 
@@ -84,19 +113,46 @@ uint8_t CAN_Transmit(CAN_HandleTypeDef *hcan, uint32_t Id, uint8_t *msg, uint16_
      * HAL_OK 表示请求已被 CAN 外设接受，不代表总线上已经成功发送或收到 ACK；
      * 后续发送完成/错误状态由 CAN 硬件和 HAL 状态机制反映。
      */
-    return HAL_CAN_AddTxMessage(hcan, &header, msg, &mailbox) == HAL_OK ? 1U : 0U;
+    if (HAL_CAN_AddTxMessage(hcan, &header, msg, &mailbox) != HAL_OK)
+    {
+        ++g_can_debug.tx_rejected;
+        return 0U;
+    }
+    ++g_can_debug.tx_queued;
+    return 1U;
+}
+
+void CAN_PollReceive(void)
+{
+    ++g_can_debug.rx_poll_count;
+    /* The IRQ and polling path must not consume the same FIFO concurrently. */
+    HAL_NVIC_DisableIRQ(CAN1_RX0_IRQn);
+    const uint32_t previous_rx_frames = g_can_debug.rx_frames;
+    DrainRxFifo0(&hcan1);
+    g_can_debug.rx_poll_frames += g_can_debug.rx_frames - previous_rx_frames;
+    HAL_NVIC_EnableIRQ(CAN1_RX0_IRQn);
+
+    const uint32_t esr = hcan1.Instance->ESR;
+    g_can_debug.can1_esr = esr;
+    g_can_debug.can1_tx_error_count = static_cast<uint8_t>(esr >> 16U);
+    g_can_debug.can1_rx_error_count = static_cast<uint8_t>(esr >> 24U);
+    g_can_debug.can1_last_error_code = static_cast<uint8_t>((esr >> 4U) & 7U);
+    g_can_debug.can1_bus_off = (esr & CAN_ESR_BOFF) != 0U ? 1U : 0U;
+    g_can_debug.can1_hal_error = HAL_CAN_GetError(&hcan1);
+    g_can_debug.can1_state = static_cast<uint32_t>(HAL_CAN_GetState(&hcan1));
+    g_can_debug.can1_tx_mailboxes_free =
+        static_cast<uint8_t>(HAL_CAN_GetTxMailboxesFreeLevel(&hcan1));
 }
 
 /**
- * @brief HAL 的 FIFO0 接收中断回调，将电机反馈帧转交给电机管理器。
+ * @brief HAL 的 FIFO0 接收中断回调，将电机反馈帧放入线程队列。
  *
  * 一个中断可能对应 FIFO0 中多帧积压，因此循环取出直至 FIFO 为空。
  * 每帧先由 HAL 读取并释放 FIFO 项，再筛选标准数据帧、8 字节 DLC 和
  * 电机反馈 ID 0x201~0x208；其余帧已从 FIFO 取走但不进入电机反馈处理。
- * 电机索引按 ID 偏移换算：0x201 -> 0，...，0x208 -> 7。
+ * 电机索引在线程解析时按 ID 偏移换算。
  *
- * @note 此函数运行在中断上下文；被调用的反馈更新逻辑应保持短小、不可阻塞，
- *       不应在其中执行等待、打印或耗时的控制计算。
+ * @note 此函数运行在中断上下文，仅以 TX_NO_WAIT 入队，不做 PID 或反馈解析。
  */
 void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan)
 {
@@ -106,25 +162,6 @@ void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan)
         return;
     }
 
-    // 排空当前 FIFO0，避免仍有帧待处理时丢失后续通知或造成积压。
-    while (HAL_CAN_GetRxFifoFillLevel(hcan, CAN_RX_FIFO0) > 0U)
-    {
-        CAN_RxHeaderTypeDef header;
-        uint8_t data[8];
-        // 读取头部和最多 8 字节数据，同时由 HAL 从 FIFO0 移除该帧。
-        if (HAL_CAN_GetRxMessage(hcan, CAN_RX_FIFO0, &header, data) != HAL_OK)
-        {
-            // FIFO 读取失败表示 HAL/外设异常，沿用板级统一的致命错误处理。
-            Error_Handler();
-            return;
-        }
-
-        // 仅 DJI 电机反馈格式进入电机层；扩展帧、远程帧及其他 ID 在 BSP 层过滤。
-        if (header.IDE == CAN_ID_STD && header.RTR == CAN_RTR_DATA &&
-            header.DLC == 8U && header.StdId >= 0x201U && header.StdId <= 0x208U)
-        {
-            // 传入接收总线和 0~7 槽位，管理器据此找到对应注册电机并解析反馈。
-            DJIMotorHandler::Instance()->updateFeedback(hcan, data, static_cast<int>(header.StdId - 0x201U));
-        }
-    }
+    ++g_can_debug.rx_irq_count;
+    DrainRxFifo0(hcan);
 }

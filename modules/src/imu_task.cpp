@@ -61,3 +61,20 @@ extern "C" uint8_t BMI088_TaskRead(BMI088_Sample *sample)
     // 聚合返回值要求三个分项全部有效；调用方也可单独使用各 valid 标志降级处理。
     return sample->acc_valid && sample->gyro_valid && sample->temperature_valid;
 }
+
+extern "C" uint32_t BMI088_TaskGetErrorFlags(void)
+{
+    return (imu.self_test.ACC_CHIP_ID_ERR ? (1UL << 0) : 0UL) |
+           (imu.self_test.GYRO_CHIP_ID_ERR ? (1UL << 1) : 0UL) |
+           (imu.self_test.INIT_ERR ? (1UL << 2) : 0UL) |
+           (imu.self_test.ACC_DATA_ERR ? (1UL << 3) : 0UL) |
+           (imu.self_test.GYRO_DATA_ERR ? (1UL << 4) : 0UL);
+}
+
+extern "C" void BMI088_TaskGetChipIds(uint8_t *acc_id, uint8_t *gyro_id)
+{
+    if (acc_id != nullptr)
+        *acc_id = imu.last_acc_chip_id;
+    if (gyro_id != nullptr)
+        *gyro_id = imu.last_gyro_chip_id;
+}

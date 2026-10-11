@@ -71,7 +71,10 @@ VOID tx_application_define(VOID *first_unused_memory)
 
   VOID *memory_ptr;
 
-  if (tx_byte_pool_create(&tx_app_byte_pool, "Tx App memory pool", tx_byte_pool_buffer, TX_APP_MEM_POOL_SIZE) != TX_SUCCESS)
+  ++g_bmi088_debug.kernel_define_count;
+  g_bmi088_debug.byte_pool_status = tx_byte_pool_create(
+      &tx_app_byte_pool, "Tx App memory pool", tx_byte_pool_buffer, TX_APP_MEM_POOL_SIZE);
+  if (g_bmi088_debug.byte_pool_status != TX_SUCCESS)
   {
     /* USER CODE BEGIN TX_Byte_Pool_Error */
 
@@ -85,7 +88,8 @@ VOID tx_application_define(VOID *first_unused_memory)
 
     memory_ptr = (VOID *)&tx_app_byte_pool;
 
-    if (App_ThreadX_Init(memory_ptr) != TX_SUCCESS)
+    g_bmi088_debug.app_init_status = App_ThreadX_Init(memory_ptr);
+    if (g_bmi088_debug.app_init_status != TX_SUCCESS)
     {
       /* USER CODE BEGIN  App_ThreadX_Init_Error */
 

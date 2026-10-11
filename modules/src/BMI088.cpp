@@ -2,6 +2,7 @@
 #include "spi.h"
 #include "tx_api.h"
 #include <cmath>
+#include <cstring>
 
 namespace BMI088
 {
@@ -139,6 +140,7 @@ namespace BMI088
     {
         uint8_t id = 0;
         ReadReg(BMI088_CS_ACC, ACC_CHIP_ID_ADDR, &id, 1);
+        last_acc_chip_id = id;
         // 芯片 ID 比较用于设置专属错误标志，再并入总初始化错误状态。
         self_test.ACC_CHIP_ID_ERR = id != ACC_CHIP_ID_VAL;
         self_test.INIT_ERR |= self_test.ACC_CHIP_ID_ERR;
@@ -148,6 +150,7 @@ namespace BMI088
     {
         uint8_t id = 0;
         ReadReg(BMI088_CS_GYRO, GYRO_CHIP_ID_ADDR, &id, 1);
+        last_gyro_chip_id = id;
         self_test.GYRO_CHIP_ID_ERR = id != GYRO_CHIP_ID_VAL;
         self_test.INIT_ERR |= self_test.GYRO_CHIP_ID_ERR;
     }
@@ -175,7 +178,7 @@ namespace BMI088
 
     /*
      * 向指定 BMI088 芯片写一个寄存器地址及后续连续数据字节。
-     * 传输采用阻塞 HAL SPI；CS 在地址和全部 payload 期间保持低电平，
+     * 传输采用一次阻塞 HAL SPI 调用；CS 在地址和全部 payload 期间保持低电平，
      * 事务结束后恢复高电平。len=0 时只发送地址阶段。
      */
     void cBMI088::WriteReg(enum BMI088_SENSOR cs, uint8_t addr, uint8_t *data, uint8_t len)
@@ -189,13 +192,15 @@ namespace BMI088
             return;
         }
 
-        // BMI088 写事务的地址 bit7 清零；HAL 先发地址，随后才在同一 CS 下发 payload。
-        uint8_t command = addr & BMI088_SPI_WRITE_CODE;
+        // Send address and payload as one SPI transfer while CS stays asserted.
+        uint8_t frame[1U + UINT8_MAX];
+        frame[0] = addr & BMI088_SPI_WRITE_CODE;
+        if (len != 0U)
+            std::memcpy(&frame[1], data, len);
         HAL_GPIO_WritePin(port, pin, GPIO_PIN_RESET);
-        HAL_StatusTypeDef status = HAL_SPI_Transmit(&hspi1, &command, 1, SPI_TIMEOUT);
-        // 地址发送失败时不继续发数据，避免把 payload 错当成寄存器地址。
-        if (status == HAL_OK && len != 0U)
-            status = HAL_SPI_Transmit(&hspi1, data, len, SPI_TIMEOUT);
+        HAL_StatusTypeDef status = HAL_SPI_Transmit(&hspi1, frame,
+                                                   static_cast<uint16_t>(len) + 1U,
+                                                   SPI_TIMEOUT);
         // 无论 HAL 返回成功或错误，都释放当前从设备片选。
         HAL_GPIO_WritePin(port, pin, GPIO_PIN_SET);
 
@@ -224,24 +229,30 @@ namespace BMI088
          * 两类芯片读时序不同：地址 bit7 置 1；加速度计在地址之后需额外丢弃
          * 一个 dummy byte（手册要求的读延迟），陀螺仪则直接开始有效数据读取。
          */
-        uint8_t command = addr | BMI088_SPI_READ_CODE;
-        uint8_t dummy = 0;
+        const uint16_t offset = cs == BMI088_CS_ACC ? 2U : 1U;
+        const uint16_t transfer_size = static_cast<uint16_t>(len) + offset;
+        uint8_t tx_frame[2U + UINT8_MAX];
+        uint8_t rx_frame[2U + UINT8_MAX] = {};
+        std::memset(tx_frame, 0xFF, transfer_size);
+        tx_frame[0] = addr | BMI088_SPI_READ_CODE;
         HAL_GPIO_WritePin(port, pin, GPIO_PIN_RESET);
-        HAL_StatusTypeDef status = HAL_SPI_Transmit(&hspi1, &command, 1, SPI_TIMEOUT);
-        // ACC 的首个接收字节无效，只负责产生额外 SCLK，因此单独读入 dummy 丢弃。
-        if (status == HAL_OK && cs == BMI088_CS_ACC)
-            status = HAL_SPI_Receive(&hspi1, &dummy, 1, SPI_TIMEOUT);
-        if (status == HAL_OK)
-            status = HAL_SPI_Receive(&hspi1, data, len, SPI_TIMEOUT);
+        // Full-duplex transfer clocks address, ACC dummy byte, and data
+        // without interrupting the SPI peripheral between bytes.
+        HAL_StatusTypeDef status = HAL_SPI_TransmitReceive(
+            &hspi1, tx_frame, rx_frame, transfer_size, SPI_TIMEOUT);
         HAL_GPIO_WritePin(port, pin, GPIO_PIN_SET);
 
         // 成功读取会清除对应数据错误标志；失败由 SetCommError 保持为错误状态。
         if (status != HAL_OK)
             SetCommError(this, cs);
-        else if (cs == BMI088_CS_ACC)
-            self_test.ACC_DATA_ERR = false;
         else
-            self_test.GYRO_DATA_ERR = false;
+        {
+            std::memcpy(data, &rx_frame[offset], len);
+            if (cs == BMI088_CS_ACC)
+                self_test.ACC_DATA_ERR = false;
+            else
+                self_test.GYRO_DATA_ERR = false;
+        }
     }
 
     void cBMI088::Config()
@@ -261,12 +272,22 @@ namespace BMI088
         self_test.GYRO_CHIP_ID_ERR = true;
         tx_thread_sleep(10);
 
+        /* ACC starts in I2C mode. Discard one read so the CS rising edge
+         * switches it to SPI before the first real register write. */
+        value = 0;
+        ReadReg(BMI088_CS_ACC, ACC_CHIP_ID_ADDR, &value, 1);
+
         value = ACC_SOFTRESET_VAL;
         // 复位命令必须对两颗内部芯片分别发送，各自使用独立 CS。
         WriteReg(BMI088_CS_ACC, ACC_SOFTRESET_ADDR, &value, 1);
         value = GYRO_SOFTRESET_VAL;
         WriteReg(BMI088_CS_GYRO, GYRO_SOFTRESET_ADDR, &value, 1);
         tx_thread_sleep(100);
+
+        // The accelerometer soft reset also resets its SPI selection. Bosch's
+        // reference driver performs another discarded read after that reset.
+        value = 0;
+        ReadReg(BMI088_CS_ACC, ACC_CHIP_ID_ADDR, &value, 1);
 
         VerifyAccChipID();
         VerifyGyroChipID();

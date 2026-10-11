@@ -33,6 +33,9 @@ public:
      */
     void setOutput() override;
 
+    /* Trajectory velocity feedforward for position mode, in output-shaft rad/s. */
+    float positionFeedforwardRadS = 0.0f;
+
     MotorStateTypedef AliveCheck() override;
 };
 
