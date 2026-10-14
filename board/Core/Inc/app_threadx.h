@@ -57,6 +57,26 @@ typedef struct
 } BMI088_DebugInfo;
 
 extern volatile BMI088_DebugInfo g_bmi088_debug;
+
+/* Live Watch: zero means false; heartbeat fields report the latest monitor window. */
+typedef struct
+{
+  uint32_t thread_create_status;
+  uint32_t thread_entries;
+  uint32_t checks;
+  uint8_t startup_ready;
+  uint8_t can_ready;
+  uint8_t imu_ready;
+  uint8_t motor_ready;
+  uint8_t imu_alive;
+  uint8_t motor_alive;
+  uint8_t imu_operation_ok;
+  uint8_t motor_operation_ok;
+  uint8_t motor_feedback_online;
+  uint8_t fault;
+} Alive_DebugInfo;
+
+extern volatile Alive_DebugInfo g_alive_debug;
 /* USER CODE END ET */
 
 /* Exported constants --------------------------------------------------------*/
@@ -91,6 +111,7 @@ void MX_ThreadX_Init(void);
 #error "Choose only one debug mode"
 #endif
 #define APP_FULL_MODE (!(BMI088_ONLY_DEBUG || M2006_ONLY_DEBUG || IMU_M2006_DEBUG))
+#define APP_ALIVE_MONITOR (APP_FULL_MODE || IMU_M2006_DEBUG)
 /* USER CODE END PD */
 
 /* USER CODE BEGIN 1 */

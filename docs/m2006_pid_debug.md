@@ -1,14 +1,14 @@
 # M2006 双环 PID 调试
 
-当前配置为 CAN1 上的 C610 ID 3：反馈标准帧 `0x203`，控制标准帧 `0x200` 的第 5、6 个字节。电机线程每 10 ms 执行一次：接收反馈 → 位置 PID 生成速度目标 → 速度 PID 生成电流命令 → 打包并发送 CAN。
+当前配置为 CAN1 上的 C610 ID 1：反馈标准帧 `0x201`，控制标准帧 `0x200` 的第 1、2 个字节。电机线程每 10 ms 执行一次：接收反馈 → 位置 PID 生成速度目标 → 速度 PID 生成电流命令 → 打包并发送 CAN。
 
 ## 调整参数
 
 - `modules/src/M2006.cpp` 顶部的 `kPositionKp/Ki/Kd` 是位置外环，`kPositionMaxSpeedRadS` 是外环输出的速度上限。
 - 同一文件的 `kSpeedKp/Ki/Kd` 是速度内环，`kSpeedIntegralLimit` 是速度环积分限幅，`kCurrentCommandLimit` 是电流命令限幅。修改后重新构建、烧录。
-- `modules/src/control_task.cpp` 顶部的 `kSineAmplitudeRad` 和 `kSinePeriodTicks` 控制正弦位置目标。当前以首次收到的输出轴角度为中心，幅值 ±0.5 rad、周期 6 s；位置参考为 `中心 + 0.5 sin(2πt/6)`，速度前馈为其导数，峰值约 0.524 rad/s。目标从当前角度开始，正反往复运动。
+- `modules/src/control_task.cpp` 顶部的 `kSineAmplitudeRad` 和 `kSinePeriodTicks` 控制正弦位置目标。当前以首次收到的输出轴角度为中心，幅值 ±0.5 rad、周期 6 s；位置参考为 `中心 + 0.5 sin(2πt/6)`，速度前馈为其导数，峰值约 0.524 rad/s。加速度前馈为二阶导数，峰值约 0.548 rad/s²。目标从当前角度开始，正反往复运动。
 
-PID 的 `Ki` 和 `Kd` 针对 10 ms 调用周期整定，当前实现不自动乘除采样间隔。电流命令为 C610 协议数值，不是安培数；当前调试限幅为 ±2000。为减少波峰、波谷的平直停滞，试验初值调整为速度环 `Kp=200, Ki=1.5`、位置环 `Kp=12`，并在位置模式加入随速度目标平滑变化、最大约 ±100 的低速摩擦补偿；尚未在实机上验证。摩擦补偿参数 `kFrictionCurrent`、`kFrictionBlendSpeedRadS` 在 `modules/src/M2006.cpp` 顶部。先空载、小目标调速度环，再调位置外环；若反向时振荡，先降低 `kPositionKp` 或 `kFrictionCurrent`，若全程速度落后，逐步增大 `kSpeedKp`，每次只改一个参数并比较曲线。
+PID 的 `Ki` 和 `Kd` 针对 10 ms 调用周期整定，当前实现不自动乘除采样间隔。电流命令为 C610 协议数值，不是安培数；当前调试限幅为 ±2000。速度环试验参数 `Kp=225, Ki=2.5`，位置环 `Kp=10`；速度目标换向时清除上一方向的速度积分。位置模式还包含低速摩擦补偿、速度电流前馈 `kVelocityCurrentPerRadS=120`、正弦加速度电流前馈，以及实际速度接近零时最多约 ±200 的额外起转电流。速度前馈在当前正弦目标最大速度处贡献约 ±63 电流命令，减少为维持转速所需的持续速度误差。起转方向考虑未来约 0.4 秒的轨迹加速度，补偿随实际速度上升而消退。这些都是试验初值，尚未在实机上验证；若速度过冲或位置领先，先降低 `kVelocityCurrentPerRadS`，若换向抖动，先降低 `kBreakawayCurrent`，每次只改一个参数并比较曲线。
 
 ## 观察实时数值
 
@@ -17,7 +17,7 @@ PID 的 `Ki` 和 `Kd` 针对 10 ms 调用周期整定，当前实现不自动乘
 - `g_m2006_debug.feedback_frames`、`feedback_online`：确认电机反馈可用。
 - `g_m2006_debug.position_target_rad`、`output_position_rad`、`position_error_rad`：位置外环。
 - `g_m2006_debug.speed_target_active_rad_s`、`output_speed_rad_s`、`speed_error_rad_s`：速度内环。
-- `g_m2006_debug.position_pid_speed_rad_s`、`speed_pid_current`、`current_command`：两级 PID 输出及发送电流。`current_command` 包含摩擦补偿，因此与 `speed_pid_current` 可能不同。
+- `g_m2006_debug.position_pid_speed_rad_s`、`speed_pid_current`、`current_command`：两级 PID 输出及发送电流。`current_command` 包含摩擦和加速度前馈补偿，因此与 `speed_pid_current` 可能不同。
 
 如果 `feedback_online` 为 0，闭环会保持松开；先检查 `g_can_debug.last_rx_bus`、`last_rx_id`、`rx_m2006_frames`。
 

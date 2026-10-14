@@ -53,6 +53,7 @@
  */
 #define WORKER_HEARTBEAT_TICKS (TX_TIMER_TICKS_PER_SECOND / 20U)
 #define HEARTBEAT_TIMEOUT_TICKS (TX_TIMER_TICKS_PER_SECOND / 5U)
+#define ALIVE_BLINK_HALF_PERIOD_TICKS (TX_TIMER_TICKS_PER_SECOND / 4U)
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -81,7 +82,7 @@ static ULONG usart_thread_stack[512];
 static TX_SEMAPHORE usart_rx_ready;
 static TX_THREAD imu_thread;
 static ULONG imu_thread_stack[768];
-#if APP_FULL_MODE
+#if APP_ALIVE_MONITOR
 static TX_SEMAPHORE imu_heartbeat;
 static TX_SEMAPHORE imu_operation;
 #endif
@@ -89,7 +90,7 @@ static TX_SEMAPHORE imu_operation;
 static TX_THREAD motor_thread;
 static ULONG motor_thread_stack[512];
 #endif
-#if APP_FULL_MODE
+#if APP_ALIVE_MONITOR
 static TX_SEMAPHORE motor_heartbeat;
 static TX_SEMAPHORE motor_operation;
 static TX_THREAD alive_thread;
@@ -109,6 +110,9 @@ volatile BMI088_Sample g_imu_sample;
 volatile BMI088_DebugInfo g_bmi088_debug = {
   .byte_pool_status = 0xFFFFFFFFUL,
   .app_init_status = 0xFFFFFFFFUL,
+  .thread_create_status = 0xFFFFFFFFUL
+};
+volatile Alive_DebugInfo g_alive_debug = {
   .thread_create_status = 0xFFFFFFFFUL
 };
 /*
@@ -143,7 +147,7 @@ static VOID IMU_ThreadEntry(ULONG argument);
 #if !BMI088_ONLY_DEBUG
 static VOID Motor_ThreadEntry(ULONG argument);
 #endif
-#if APP_FULL_MODE
+#if APP_ALIVE_MONITOR
 static VOID Alive_ThreadEntry(ULONG argument);
 #endif
 /* USER CODE END PFP */
@@ -169,6 +173,14 @@ UINT App_ThreadX_Init(VOID *memory_ptr)
   can_ready = 0U;
   control_ready = 0U;
   imu_ready = 0U;
+  ret = tx_semaphore_create(&imu_heartbeat, "IMU heartbeat", 0);
+  if (ret != TX_SUCCESS) return ret;
+  ret = tx_semaphore_create(&imu_operation, "IMU operation", 0);
+  if (ret != TX_SUCCESS) return ret;
+  ret = tx_semaphore_create(&motor_heartbeat, "Motor heartbeat", 0);
+  if (ret != TX_SUCCESS) return ret;
+  ret = tx_semaphore_create(&motor_operation, "Motor operation", 0);
+  if (ret != TX_SUCCESS) return ret;
   ret = tx_thread_create(&imu_thread, "BMI088",
                          IMU_ThreadEntry, 0,
                          imu_thread_stack, sizeof(imu_thread_stack),
@@ -182,10 +194,13 @@ UINT App_ThreadX_Init(VOID *memory_ptr)
                          Motor_ThreadEntry, 0,
                          motor_thread_stack, sizeof(motor_thread_stack),
                          8, 8, TX_NO_TIME_SLICE, TX_AUTO_START);
-  if (ret == TX_SUCCESS)
-  {
-    startup_ready = 1U;
-  }
+  if (ret != TX_SUCCESS) return ret;
+  ret = tx_thread_create(&alive_thread, "Alive monitor",
+                         Alive_ThreadEntry, 0,
+                         alive_thread_stack, sizeof(alive_thread_stack),
+                         15, 15, TX_NO_TIME_SLICE, TX_AUTO_START);
+  g_alive_debug.thread_create_status = ret;
+  if (ret == TX_SUCCESS) startup_ready = 1U;
   return ret;
 #elif M2006_ONLY_DEBUG
   startup_ready = 0U;
@@ -275,6 +290,7 @@ UINT App_ThreadX_Init(VOID *memory_ptr)
                          Alive_ThreadEntry, 0,
                          alive_thread_stack, sizeof(alive_thread_stack),
                          15, 15, TX_NO_TIME_SLICE, TX_AUTO_START);
+  g_alive_debug.thread_create_status = ret;
   if (ret != TX_SUCCESS)
   {
     return ret;
@@ -455,7 +471,7 @@ static VOID USART_ThreadEntry(ULONG argument)
 static VOID IMU_ThreadEntry(ULONG argument)
 {
   BMI088_Sample sample = {0};
-#if APP_FULL_MODE
+#if APP_ALIVE_MONITOR
   uint8_t operation_ok;
 #endif
   (void)argument;
@@ -487,7 +503,7 @@ static VOID IMU_ThreadEntry(ULONG argument)
     {
       uint8_t read_ok;
       ++g_bmi088_debug.sample_attempts;
-#if APP_FULL_MODE
+#if APP_ALIVE_MONITOR
       read_ok = operation_ok = BMI088_TaskRead(&sample);
 #else
       read_ok = BMI088_TaskRead(&sample);
@@ -506,7 +522,7 @@ static VOID IMU_ThreadEntry(ULONG argument)
       UINT interrupt_state = tx_interrupt_control(TX_INT_DISABLE);
       g_imu_sample = sample;
       tx_interrupt_control(interrupt_state);
-#if APP_FULL_MODE
+#if APP_ALIVE_MONITOR
       if (operation_ok)
       {
         (void)tx_semaphore_put(&imu_operation);
@@ -514,7 +530,7 @@ static VOID IMU_ThreadEntry(ULONG argument)
 #endif
     }
 
-#if APP_FULL_MODE
+#if APP_ALIVE_MONITOR
     /*
      * 无论初始化或采样成功与否都发送 heartbeat：
      * Alive 线程可据此识别“线程还在跑，但传感器功能失败”的情况。
@@ -548,7 +564,7 @@ static VOID Motor_ThreadEntry(ULONG argument)
     {
       operation_ok = ControlTask_Step();
     }
-#if APP_FULL_MODE
+#if APP_ALIVE_MONITOR
     if (operation_ok)
     {
       (void)tx_semaphore_put(&motor_operation);
@@ -563,7 +579,7 @@ static VOID Motor_ThreadEntry(ULONG argument)
 }
 #endif
 
-#if APP_FULL_MODE
+#if APP_ALIVE_MONITOR
 static UINT WaitForHeartbeat(TX_SEMAPHORE *heartbeat,
                              TX_SEMAPHORE *operation,
                              UINT *operation_ok)
@@ -596,23 +612,44 @@ static VOID Alive_ThreadEntry(ULONG argument)
   UINT motor_alive;
   UINT imu_ok;
   UINT motor_ok;
+  UINT motor_feedback_online;
+  UINT fault;
   (void)argument;
+  ++g_alive_debug.thread_entries;
 
   for (;;)
   {
     /*
      * LED 状态由系统启动、外设就绪、线程心跳和功能成功共同决定：
-     * 红灯：任一关键初始化失败，或 IMU/电机线程无心跳，或本监控窗口功能未成功；
-     * 绿灯：电机控制线程存活且窗口内至少一次 CAN 控制步进成功；
+     * 红灯闪烁：任一关键初始化失败、线程无心跳或本窗口功能失败；
+     * 绿灯：电机控制线程存活、CAN 控制步进成功且收到电机反馈；
      * 蓝灯：IMU 初始化成功、线程存活且窗口内至少一次完整样本读取成功。
-     * RGB 各通道分别控制，因此故障红灯可与仍正常工作的绿/蓝灯同时点亮。
+     * RGB 各通道分别控制，因此局部故障不遮盖另一线程的状态。
      */
     imu_alive = WaitForHeartbeat(&imu_heartbeat, &imu_operation, &imu_ok) == TX_SUCCESS;
     motor_alive = WaitForHeartbeat(&motor_heartbeat, &motor_operation, &motor_ok) == TX_SUCCESS;
-    LED_SetRGB(!startup_ready || !can_ready || !control_ready ||
-                   !imu_alive || !motor_alive || !imu_ready || !imu_ok || !motor_ok,
-               motor_alive && motor_ok,
+    motor_feedback_online = g_m2006_debug.feedback_online != 0U;
+    fault = !startup_ready || !can_ready || !control_ready || !imu_ready ||
+            !imu_alive || !motor_alive || !imu_ok || !motor_ok ||
+            !motor_feedback_online;
+
+    g_alive_debug.startup_ready = startup_ready;
+    g_alive_debug.can_ready = can_ready;
+    g_alive_debug.imu_ready = imu_ready;
+    g_alive_debug.motor_ready = control_ready;
+    g_alive_debug.imu_alive = (uint8_t)imu_alive;
+    g_alive_debug.motor_alive = (uint8_t)motor_alive;
+    g_alive_debug.imu_operation_ok = (uint8_t)imu_ok;
+    g_alive_debug.motor_operation_ok = (uint8_t)motor_ok;
+    g_alive_debug.motor_feedback_online = (uint8_t)motor_feedback_online;
+    g_alive_debug.fault = (uint8_t)fault;
+    ++g_alive_debug.checks;
+
+    LED_SetRGB(fault && ((tx_time_get() / ALIVE_BLINK_HALF_PERIOD_TICKS) & 1U) == 0U,
+               motor_alive && motor_ok && can_ready && control_ready &&
+                   motor_feedback_online,
                imu_alive && imu_ready && imu_ok);
+    tx_thread_sleep(TX_TIMER_TICKS_PER_SECOND / 100U);
   }
 }
 #endif

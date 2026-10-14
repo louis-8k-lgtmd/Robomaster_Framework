@@ -35,6 +35,11 @@ public:
 
     /* Trajectory velocity feedforward for position mode, in output-shaft rad/s. */
     float positionFeedforwardRadS = 0.0f;
+    /* Trajectory acceleration feedforward for position mode, in output-shaft rad/s^2. */
+    float positionAccelerationFeedforwardRadS2 = 0.0f;
+
+    /* Last nonzero position-mode speed direction, used to clear stale I on reversal. */
+    int8_t positionDemandDirection = 0;
 
     MotorStateTypedef AliveCheck() override;
 };

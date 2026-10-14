@@ -29,6 +29,7 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+#include "led.h"
 
 /* USER CODE END Includes */
 
@@ -93,6 +94,10 @@ int main(void)
 
   /* 独立调试模式只初始化对应外设；正常模式初始化全部外设。 */
   MX_GPIO_Init();
+#if APP_ALIVE_MONITOR
+  /* Keep red on until ThreadX objects and the monitored peripherals are ready. */
+  LED_SetRGB(1U, 0U, 0U);
+#endif
 #if IMU_M2006_DEBUG
   MX_SPI1_Init();
   MX_CAN1_Init();

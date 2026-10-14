@@ -4,8 +4,8 @@
 #include <stdint.h>
 #include "can.h"
 
-/* C610 green LED blinks three times: ESC ID 3, feedback standard ID 0x203. */
-#define M2006_FEEDBACK_STD_ID 0x203U
+/* C610 ESC ID 1 uses standard feedback ID 0x201 on CAN1. */
+#define M2006_FEEDBACK_STD_ID 0x201U
 #define M2006_TRACE_CAPACITY 512U
 
 #ifdef __cplusplus

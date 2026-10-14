@@ -41,6 +41,7 @@ void UpdateAutoPositionTarget(bool online, ULONG now)
     {
         auto_target_active = false;
         motor.positionFeedforwardRadS = 0.0f;
+        motor.positionAccelerationFeedforwardRadS2 = 0.0f;
         g_m2006_debug.auto_rotate_started = 0U;
         return;
     }
@@ -48,6 +49,7 @@ void UpdateAutoPositionTarget(bool online, ULONG now)
     {
         auto_target_active = false;
         motor.positionFeedforwardRadS = 0.0f;
+        motor.positionAccelerationFeedforwardRadS2 = 0.0f;
         g_m2006_debug.auto_rotate_started = 0U;
         g_m2006_debug.requested_mode = DJIMotor::RELAX_MODE;
         return;
@@ -67,6 +69,8 @@ void UpdateAutoPositionTarget(bool online, ULONG now)
     g_m2006_debug.position_target_rad = auto_center_rad +
         kSineAmplitudeRad * std::sin(phase_rad);
     motor.positionFeedforwardRadS = kSineAmplitudeRad * omega * std::cos(phase_rad);
+    motor.positionAccelerationFeedforwardRadS2 =
+        -kSineAmplitudeRad * omega * omega * std::sin(phase_rad);
     g_m2006_debug.requested_mode = DJIMotor::POS_MODE;
     g_m2006_debug.auto_rotate_started = 1U;
 }
@@ -92,7 +96,10 @@ void ApplyRequestedMode(bool online)
     motor.speedSet = speed;
     motor.positionSet = position;
     if (next != DJIMotor::POS_MODE || !g_m2006_debug.auto_rotate_enabled)
+    {
         motor.positionFeedforwardRadS = 0.0f;
+        motor.positionAccelerationFeedforwardRadS2 = 0.0f;
+    }
     g_m2006_debug.active_mode = static_cast<uint8_t>(next);
 }
 }
